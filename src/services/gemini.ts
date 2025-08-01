@@ -1,9 +1,20 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GOOGLE_AI_API_KEY);
+const API_KEY = import.meta.env.VITE_GOOGLE_AI_API_KEY;
+const MODEL_NAME = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.0-flash-exp';
 
 export async function rewriteNewsArticle(text: string, targetLength: number): Promise<string> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  console.log('🤖 Gemini: Iniciando processamento...');
+  
+  if (!API_KEY) {
+    console.error('🤖 Gemini: API key não configurada');
+    throw new Error('Google Gemini AI API key not configured');
+  }
+
+  console.log('🤖 Gemini: API key encontrada, inicializando cliente...');
+  console.log('🤖 Gemini: Modelo selecionado:', MODEL_NAME);
+  const genAI = new GoogleGenerativeAI(API_KEY);
+  const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
   const prompt = `
   Você é um repórter Brasileiro e irá reescrever a notícia para o estilo rádio-jornalismo para que uma ferramente text-to-speech do Eleven Labs faça a leitura do seu texto.
@@ -25,11 +36,38 @@ export async function rewriteNewsArticle(text: string, targetLength: number): Pr
   `;
 
   try {
+    console.log('🤖 Gemini: Enviando requisição para API...');
+    console.log('🤖 Gemini: Tamanho do texto de entrada:', text.length, 'caracteres');
+    console.log('🤖 Gemini: Tempo alvo:', targetLength, 'segundos');
+    
     const result = await model.generateContent(prompt);
+    console.log('🤖 Gemini: Resposta recebida, processando...');
+    
     const response = await result.response;
-    return response.text();
+    const generatedText = response.text();
+    
+    console.log('🤖 Gemini: Texto gerado com sucesso');
+    console.log('🤖 Gemini: Tamanho do texto gerado:', generatedText.length, 'caracteres');
+    
+    if (!generatedText || generatedText.trim().length === 0) {
+      console.error('🤖 Gemini: Resposta vazia recebida');
+      throw new Error('Empty response from Gemini AI');
+    }
+    
+    return generatedText;
   } catch (error) {
-    console.error('Error rewriting news article:', error);
+    console.error('🤖 Gemini: Erro durante processamento:', error);
+    
+    if (error instanceof Error) {
+      if (error.message.includes('API_KEY_INVALID')) {
+        throw new Error('Invalid Google Gemini AI API key');
+      }
+      if (error.message.includes('QUOTA_EXCEEDED')) {
+        throw new Error('Google Gemini AI quota exceeded');
+      }
+      throw error;
+    }
+    
     throw new Error('Failed to process news article with Gemini AI');
   }
 }

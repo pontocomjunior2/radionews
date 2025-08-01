@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Clock, Mic2, Download, Globe, Rss, AlertCircle } from 'lucide-react';
 import { getVoices, generateSpeech, type Voice } from './services/elevenlabs';
-import { rewriteNewsArticle } from './services/gemini';
+import { rewriteNewsArticle } from './services/ai';
 import { getLatestNews, getNewsFromUrl } from './services/rss';
 
 interface GeneratedNews {
@@ -19,6 +19,7 @@ function App() {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState<string>('');
   const [autoGenerate, setAutoGenerate] = useState(false);
   const [saveToLocal, setSaveToLocal] = useState(false);
   const [lastGenerated, setLastGenerated] = useState<GeneratedNews | null>(null);
@@ -191,40 +192,157 @@ function App() {
       return;
     }
 
+    // Validate API keys based on selected provider
+    const aiProvider = import.meta.env.VITE_AI_PROVIDER || 'gemini';
+    
+    switch (aiProvider) {
+      case 'gemini':
+        if (!import.meta.env.VITE_GOOGLE_AI_API_KEY) {
+          setError('Chave do Google Gemini AI não configurada. Verifique o arquivo .env');
+          return;
+        }
+        break;
+      case 'openai':
+        if (!import.meta.env.VITE_OPENAI_API_KEY) {
+          setError('Chave do OpenAI não configurada. Verifique o arquivo .env');
+          return;
+        }
+        break;
+      case 'perplexity':
+        if (!import.meta.env.VITE_PERPLEXITY_API_KEY) {
+          setError('Chave do Perplexity não configurada. Verifique o arquivo .env');
+          return;
+        }
+        break;
+      case 'openrouter':
+        if (!import.meta.env.VITE_OPENROUTER_API_KEY) {
+          setError('Chave do OpenRouter não configurada. Verifique o arquivo .env');
+          return;
+        }
+        break;
+    }
+
+    if (!import.meta.env.VITE_ELEVENLABS_API_KEY) {
+      setError('Chave do ElevenLabs não configurada. Verifique o arquivo .env');
+      return;
+    }
+
     setIsProcessing(true);
     setError(null);
     const progressInterval = simulateProgress();
 
     try {
-      const newsText = rssUrl 
-        ? await getLatestNews(rssUrl)
-        : await getNewsFromUrl(newsUrl);
-
-      const rewrittenText = await rewriteNewsArticle(newsText, newsLength);
-      const audioUrl = await generateSpeech(rewrittenText, selectedVoice);
+      console.log('🚀 Iniciando geração de áudio...');
+      setCurrentStep('Iniciando processo...');
+      let newsText;
       
+      if (rssUrl) {
+        console.log('📡 Buscando notícias do RSS:', rssUrl);
+        setCurrentStep('Buscando notícias do RSS...');
+        try {
+          newsText = await getLatestNews(rssUrl);
+          console.log('✅ RSS carregado com sucesso. Tamanho:', newsText.length, 'caracteres');
+        } catch (error) {
+          console.error('❌ Erro ao buscar RSS:', error);
+          throw new Error('Falha ao buscar notícias do RSS. Verifique se a URL está correta e acessível.');
+        }
+      } else {
+        console.log('🌐 Extraindo conteúdo da URL:', newsUrl);
+        setCurrentStep('Extraindo conteúdo da página...');
+        try {
+          newsText = await getNewsFromUrl(newsUrl);
+          console.log('✅ Conteúdo extraído com sucesso. Tamanho:', newsText.length, 'caracteres');
+        } catch (error) {
+          console.error('❌ Erro ao extrair conteúdo:', error);
+          throw new Error('Falha ao extrair conteúdo da página. Tente usar uma URL de RSS ou uma página de notícia diferente.');
+        }
+      }
+
+      if (!newsText || newsText.trim().length < 50) {
+        console.error('❌ Conteúdo muito curto:', newsText?.length || 0, 'caracteres');
+        throw new Error('Conteúdo da notícia muito curto ou vazio. Tente uma fonte diferente.');
+      }
+
+      const aiProvider = import.meta.env.VITE_AI_PROVIDER || 'gemini';
+      console.log(`🤖 Processando texto com ${aiProvider.toUpperCase()}...`);
+      setCurrentStep(`Processando texto com ${aiProvider.toUpperCase()}...`);
+      let rewrittenText;
+      try {
+        rewrittenText = await rewriteNewsArticle(newsText, newsLength);
+        
+        // Limpar qualquer menção a contagem de palavras ou comentários técnicos
+        rewrittenText = rewrittenText
+          .replace(/\b\d+\s*palavras?\b/gi, '')
+          .replace(/\bexatamente\s+\d+\b/gi, '')
+          .replace(/\bcontagem\b/gi, '')
+          .replace(/\btotal\s*de\s*\d+\b/gi, '')
+          .replace(/\b\d+\s*segundos?\b/gi, '')
+          .replace(/\btempo\s*alvo\b/gi, '')
+          .replace(/\bresultado\s*esperado\b/gi, '')
+          .replace(/\bconfirm[oa]\b/gi, '')
+          .replace(/\.\s*$/, '.') // Remove espaços extras no final
+          .trim();
+        
+        console.log('✅ Texto reescrito com sucesso. Tamanho:', rewrittenText.length, 'caracteres');
+        
+        // Validar se o tempo está sendo respeitado
+        const wordCount = rewrittenText.split(/\s+/).filter(word => word.length > 0).length;
+        const estimatedTime = Math.ceil(wordCount / 2.5); // 2.5 palavras por segundo
+        console.log('📊 Análise do texto:');
+        console.log('   - Palavras:', wordCount);
+        console.log('   - Tempo estimado:', estimatedTime, 'segundos');
+        console.log('   - Tempo alvo:', newsLength, 'segundos');
+        
+        if (Math.abs(estimatedTime - newsLength) > 5) {
+          console.warn('⚠️ Tempo estimado difere significativamente do alvo');
+        }
+        
+        console.log('📝 Texto final:', rewrittenText.substring(0, 200) + '...');
+      } catch (error) {
+        console.error('❌ Erro na IA:', error);
+        throw new Error('Falha ao processar o texto com IA. Verifique sua configuração de IA.');
+      }
+
+      console.log('🎤 Gerando áudio com ElevenLabs...');
+      setCurrentStep('Gerando áudio...');
+      console.log('🔊 Voz selecionada:', selectedVoice);
+      let audioUrl;
+      try {
+        audioUrl = await generateSpeech(rewrittenText, selectedVoice);
+        console.log('✅ Áudio gerado com sucesso!');
+      } catch (error) {
+        console.error('❌ Erro no ElevenLabs:', error);
+        throw new Error('Falha ao gerar áudio. Verifique sua chave do ElevenLabs.');
+      }
+      
+      setCurrentStep('Finalizando...');
       const timestamp = new Date();
       const filename = generateFilename(timestamp);
 
       if (saveToLocal) {
-        // Simulate saving to local directory
-        console.log(`Saving to /noticias/${filename}`);
+        console.log('💾 Salvando arquivo:', filename);
         setLastGenerated({
           timestamp,
           filename: `/noticias/${filename}`
         });
       } else {
+        console.log('🎵 Definindo URL do áudio para reprodução');
         setAudioUrl(audioUrl);
       }
+
+      console.log('🎉 Processo concluído com sucesso!');
+      setCurrentStep('Concluído!');
     } catch (error) {
-      setError('Falha ao processar a notícia. Por favor, tente novamente.');
-      console.error('Error during generation:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Falha ao processar a notícia. Por favor, tente novamente.';
+      setError(errorMessage);
+      console.error('💥 Erro durante a geração:', error);
     } finally {
       clearInterval(progressInterval);
       setProgress(100);
       setTimeout(() => {
         setIsProcessing(false);
         setProgress(0);
+        setCurrentStep('');
       }, 500);
     }
   };
@@ -232,9 +350,16 @@ function App() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white p-8">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8 text-center">
+        <h1 className="text-3xl font-bold mb-4 text-center">
           Gerador de Áudio de Notícias
         </h1>
+        
+        {/* AI Provider Indicator */}
+        <div className="text-center mb-8">
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
+            🤖 IA: {(import.meta.env.VITE_AI_PROVIDER || 'gemini').toUpperCase()}
+          </span>
+        </div>
 
         <div className="bg-gray-800 rounded-lg p-6 shadow-xl space-y-6">
           {error && (
@@ -393,11 +518,18 @@ function App() {
 
           {/* Progress Bar */}
           {isProcessing && (
-            <div className="w-full bg-gray-700 rounded-full h-2.5 mb-4">
-              <div
-                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              ></div>
+            <div className="space-y-2">
+              {currentStep && (
+                <div className="text-sm text-gray-300 text-center">
+                  {currentStep}
+                </div>
+              )}
+              <div className="w-full bg-gray-700 rounded-full h-2.5">
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                ></div>
+              </div>
             </div>
           )}
 
